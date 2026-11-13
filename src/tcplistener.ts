@@ -9,8 +9,10 @@ async function main(){
         })
 
         try{
-            const {requestLine} = await requestFromReader(socket)
+            const {requestLine, headers} = await requestFromReader(socket)
             console.log(`Request line:\n - Method: ${requestLine?.method}\n - Target: ${requestLine?.requestTarget}\n - Version: ${requestLine?.httpVersion}`)
+            console.log("Headers:")
+            Object.entries(headers ?? {}).forEach(([name, value]) => console.log(`- ${name}: ${value}`))
         }catch(err){
             console.error(err)
         }

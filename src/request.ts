@@ -1,3 +1,5 @@
+import { parseHeader } from "./headers.ts"
+export type Headers = Record<string, string>
 
 type RequestLine = {
     httpVersion: string
@@ -10,17 +12,16 @@ type ParseRequestLineResult = {
     requestLine?: RequestLine
 }
 
-type ParserState = "initialized" | "done"
+type ParserState = "initialized" | "parsing headers" | "done"
 
 type Request = {
     requestLine?: RequestLine
+    headers: Headers
     state: ParserState
 }
 
-
 export async function requestFromReader(reader: AsyncIterable<Uint8Array> | Iterable<Uint8Array>): Promise<Request>{
-    const request: Request = {state: "initialized"}
-
+    const request: Request = {state: "initialized", headers: {}}
     let buff = Buffer.alloc(0)
 
     for await (const chunk of reader){
@@ -35,12 +36,36 @@ export async function requestFromReader(reader: AsyncIterable<Uint8Array> | Iter
 }
 
 function parse(request: Request, bytes: Buffer){
-    const {bytesConsumed, requestLine} = parseRequestLine(bytes)
-    if(requestLine){
-        request.state = "done"
-        request.requestLine = requestLine
+    let bytesConsumedPerChunk = 0
+    let buff = Buffer.from(bytes)
+    while(request.state !== "done"){
+        const parsedBytes = parseSingle(buff.subarray(bytesConsumedPerChunk), request)
+        if(parsedBytes === 0){
+            return bytesConsumedPerChunk
+        }
+        bytesConsumedPerChunk += parsedBytes
     }
-    return bytesConsumed
+    return bytesConsumedPerChunk
+}
+
+function parseSingle(bytes: Buffer, request: Request){
+    switch(request.state){
+        case 'initialized':
+            const {bytesConsumed, requestLine} = parseRequestLine(bytes)
+            if(requestLine){
+                request.requestLine = requestLine
+                request.state = "parsing headers"
+            }
+            return bytesConsumed
+        case 'parsing headers':
+            const res = parseHeader(request.headers, bytes)
+            if(res.done){
+                request.state = "done"
+            }
+            return res.bytesConsumed
+        case "done":
+            return 0
+    }
 }
 
 function parseRequestLine(bytes: Buffer): ParseRequestLineResult {
