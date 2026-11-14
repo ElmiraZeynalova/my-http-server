@@ -1,4 +1,4 @@
-import { parseHeader } from "./headers.ts"
+import { parseHeader, getHeaderValueByKey } from "./headers.ts"
 export type Headers = Record<string, string>
 
 type RequestLine = {
@@ -12,16 +12,17 @@ type ParseRequestLineResult = {
     requestLine?: RequestLine
 }
 
-type ParserState = "initialized" | "parsing headers" | "done"
+type ParserState = "initialized" | "parsing headers" | "parsing body" | "done" 
 
 type Request = {
     requestLine?: RequestLine
     headers: Headers
+    body: Buffer
     state: ParserState
 }
 
 export async function requestFromReader(reader: AsyncIterable<Uint8Array> | Iterable<Uint8Array>): Promise<Request>{
-    const request: Request = {state: "initialized", headers: {}}
+    const request: Request = {state: "initialized", headers: {}, body: Buffer.alloc(0)}
     let buff = Buffer.alloc(0)
 
     for await (const chunk of reader){
@@ -29,7 +30,13 @@ export async function requestFromReader(reader: AsyncIterable<Uint8Array> | Iter
         const bytesConsumed = parse(request, buff)
         if(bytesConsumed > 0) buff = buff.subarray(bytesConsumed)
 
+        
         if(request.state === "done") return request
+    }
+    
+    if(request.state === "parsing body"){
+      const contentLengthValue = getHeaderValueByKey(request.headers, "content-length")
+      if(contentLengthValue !== null && request.body.length < Number(contentLengthValue)) throw new Error("Body size is less than Content-Length field-value")
     }
 
     throw new Error("Invalid request string")
@@ -60,9 +67,25 @@ function parseSingle(bytes: Buffer, request: Request){
         case 'parsing headers':
             const res = parseHeader(request.headers, bytes)
             if(res.done){
-                request.state = "done"
+                request.state = "parsing body"
             }
             return res.bytesConsumed
+        case "parsing body":
+            const contentLengthValue = getHeaderValueByKey(request.headers, "content-length")
+            if(Number(contentLengthValue) === 0){
+              request.state = "done"
+              return bytes.length
+            }
+
+            request.body = Buffer.concat([request.body, bytes])
+
+            if(request.body.length < Number(contentLengthValue)){
+              return bytes.length
+            }
+            if(request.body.length > Number(contentLengthValue)) throw new Error("Body size is bigger than Content-Length field-value")
+
+            request.state = "done"
+            return bytes.length
         case "done":
             return 0
     }

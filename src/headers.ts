@@ -30,3 +30,9 @@ export function parseHeader(headers: Headers, bytes: Buffer): ParseHeadersResult
     return { done: false, bytesConsumed: index + delimiter.length }
 }
 
+export function getHeaderValueByKey(headers: Headers, key: string): Record<string, string> | null {
+  if(key.toLowerCase() in headers){
+    return headers[key.toLowerCase()]
+  }
+  return null
+}
