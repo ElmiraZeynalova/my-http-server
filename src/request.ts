@@ -1,5 +1,8 @@
 import { parseHeader, getHeaderValueByKey } from "./headers.ts"
 export type Headers = Record<string, string>
+import type { Readable } from "node:stream"
+
+type Reader = AsyncIterable<Uint8Array> | Iterable<Uint8Array>
 
 type RequestLine = {
     httpVersion: string
@@ -21,11 +24,15 @@ type Request = {
     state: ParserState
 }
 
-export async function requestFromReader(reader: AsyncIterable<Uint8Array> | Iterable<Uint8Array>): Promise<Request>{
+export async function requestFromReader(reader: Reader): Promise<Request>{
     const request: Request = {state: "initialized", headers: {}, body: Buffer.alloc(0)}
     let buff = Buffer.alloc(0)
 
-    for await (const chunk of reader){
+    const iterable = Symbol.asyncIterator in reader && "iterator" in reader
+        ? (reader as Readable).iterator({ destroyOnReturn: false })
+        : reader
+
+    for await (const chunk of iterable){
         buff = Buffer.concat([buff, Buffer.from(chunk)])
         const bytesConsumed = parse(request, buff)
         if(bytesConsumed > 0) buff = buff.subarray(bytesConsumed)
