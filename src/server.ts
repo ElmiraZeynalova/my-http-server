@@ -8,7 +8,7 @@ type ServerInstance = {
   isRunning: boolean
 };
 
-type HandlerFn = (writer: Writer, req: Request) => void
+type HandlerFn = (writer: Writer, req: Request) => Promise<void> | void
 
 const PORT = 42069;
 
@@ -51,7 +51,7 @@ async function handle(socket: Socket, handler: HandlerFn) {
 
   const writer: Writer = getWriter(socket)
   try {
-    handler(writer, parsedRequest)
+    await handler(writer, parsedRequest)
   } catch (err) {
       console.error("Handler error:", err)
   }
@@ -67,7 +67,32 @@ function close(serverInstance: ServerInstance) {
 }
 
 async function main() {
-  const handler: HandlerFn = (writer: Writer, req: Request) => {
+  const handler: HandlerFn = async(writer: Writer, req: Request) => {
+    if(req.requestLine?.requestTarget.startsWith("/httpbin/")){
+      const relativePath = req.requestLine.requestTarget.replace("/httpbin", "")
+      const response = await fetch(`https://httpbingo.org/${relativePath}`)
+
+      writer.writeStatusLine(response.status)
+
+      const headers = Object.fromEntries(response.headers.entries())
+      delete headers["content-length"]
+      headers["transfer-encoding"] = "chunked"
+      headers["connection"] = "close"
+      writer.writeHeaders(headers)
+
+      const reader = response.body?.getReader()
+      if (!reader) return
+      while(true){
+        const { done, value } = await reader.read()
+        if(done){
+          writer.writeChunkedBodyDone()
+          break
+        }
+        writer.writeChunkedBody(value)
+      }
+
+      return
+    }
     if(req.requestLine?.requestTarget === "/yourProblem"){
       const bodyContent = Buffer.from(
         `<html>
