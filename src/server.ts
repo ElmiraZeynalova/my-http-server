@@ -1,21 +1,14 @@
 import net from "node:net";
 import type { Server, Socket } from "node:net";
 import { requestFromReader, type Request } from "./request.ts";
-import {writeStatusLine, getDefaultHeaders, writeHeaders} from "./response.ts"
+import {getWriter, getDefaultHeaders, type Writer} from "./response.ts"
 
 type ServerInstance = {
   server: Server
   isRunning: boolean
 };
 
-type HandlerError = {
-  statusCode: number
-  message: string
-}
-
-type ResponseWriter = { buffer: Buffer }
-
-type HandlerFn = (writer: ResponseWriter, req: Request) => HandlerError | null
+type HandlerFn = (writer: Writer, req: Request) => void
 
 const PORT = 42069;
 
@@ -56,19 +49,11 @@ async function handle(socket: Socket, handler: HandlerFn) {
     return
   }
 
-  const writer = { buffer: Buffer.alloc(0) }
-  const res = handler(writer, parsedRequest!)
-
-  if(res !== null){
-    const defaultHeaders = getDefaultHeaders(Buffer.byteLength(res.message, "utf-8"))
-    writeStatusLine(socket, res.statusCode)
-    writeHeaders(socket, defaultHeaders)
-    socket.write(Buffer.from(res.message));
-  }else{
-    const defaultHeaders = getDefaultHeaders(writer.buffer.length)
-    writeStatusLine(socket, 200)
-    writeHeaders(socket, defaultHeaders)
-    socket.write(writer.buffer);
+  const writer: Writer = getWriter(socket)
+  try {
+    handler(writer, parsedRequest)
+  } catch (err) {
+      console.error("Handler error:", err)
   }
 
   socket.end();
@@ -82,22 +67,66 @@ function close(serverInstance: ServerInstance) {
 }
 
 async function main() {
-
-  const handler: HandlerFn = (writer: ResponseWriter, req: Request) => {
+  const handler: HandlerFn = (writer: Writer, req: Request) => {
     if(req.requestLine?.requestTarget === "/yourProblem"){
-      return {
-        statusCode: 400,
-        message: "Your problem is not my problem\n"
-      }
+      const bodyContent = Buffer.from(
+        `<html>
+          <head>
+            <title>400 Bad Request</title>
+          </head>
+          <body>
+            <h1>Bad Request</h1>
+            <p>Your request honestly kinda sucked.</p>
+          </body>
+        </html>`
+      )
+      const defaultHeaders = getDefaultHeaders(bodyContent.length)
+      defaultHeaders["Content-Type"] = "text/html"
+
+      writer.writeStatusLine(400)
+      writer.writeHeaders(defaultHeaders)
+      writer.writeBody(bodyContent)
+      return
     }
+
     if(req.requestLine?.requestTarget === "/myProblem"){
-      return {
-        statusCode: 500,
-        message: "Woopsie, my bad\n"
-      }
+      const bodyContent = Buffer.from(
+        `<html>
+          <head>
+            <title>500 Internal Server Error</title>
+          </head>
+          <body>
+            <h1>Internal Server Error</h1>
+            <p>Okay, you know what? This one is on me.</p>
+          </body>
+        </html>`
+      )
+      const defaultHeaders = getDefaultHeaders(bodyContent.length)
+      defaultHeaders["Content-Type"] = "text/html"
+
+      writer.writeStatusLine(500)
+      writer.writeHeaders(defaultHeaders)
+      writer.writeBody(bodyContent)
+      return
     }
-    writer.buffer = Buffer.concat([writer.buffer, Buffer.from("All good, frfr\n")])
-    return null
+
+    const bodyContent = Buffer.from(
+      `<html>
+        <head>
+          <title>200 OK</title>
+        </head>
+        <body>
+          <h1>Success!</h1>
+          <p>Your request was an absolute banger.</p>
+        </body>
+      </html>`
+    )
+    const defaultHeaders = getDefaultHeaders(bodyContent.length)
+    defaultHeaders["Content-Type"] = "text/html"
+    writer.writeStatusLine(200)
+    writer.writeHeaders(defaultHeaders)
+    writer.writeBody(bodyContent)
+    return
   }
 
   try {
