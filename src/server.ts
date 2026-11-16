@@ -2,6 +2,7 @@ import net from "node:net";
 import type { Server, Socket } from "node:net";
 import { requestFromReader, type Request } from "./request.ts";
 import {getWriter, getDefaultHeaders, type Writer} from "./response.ts"
+import crypto from "node:crypto"
 
 type ServerInstance = {
   server: Server
@@ -69,7 +70,7 @@ function close(serverInstance: ServerInstance) {
 async function main() {
   const handler: HandlerFn = async(writer: Writer, req: Request) => {
     if(req.requestLine?.requestTarget.startsWith("/httpbin/")){
-      const relativePath = req.requestLine.requestTarget.replace("/httpbin", "")
+      const relativePath = req.requestLine.requestTarget.replace("/httpbin/", "")
       const response = await fetch(`https://httpbingo.org/${relativePath}`)
 
       writer.writeStatusLine(response.status)
@@ -78,21 +79,29 @@ async function main() {
       delete headers["content-length"]
       headers["transfer-encoding"] = "chunked"
       headers["connection"] = "close"
+      if(relativePath === 'range/4096') headers['trailer'] = "x-content-sha256, x-content-length"
       writer.writeHeaders(headers)
 
+      let bodyBuff = Buffer.alloc(0)
       const reader = response.body?.getReader()
       if (!reader) return
       while(true){
         const { done, value } = await reader.read()
         if(done){
-          writer.writeChunkedBodyDone()
+          if(relativePath === 'range/4096') {
+            writer.writeTrailers({"x-content-sha256": String(crypto.hash("sha256", bodyBuff)), "x-content-length": String(bodyBuff.length)})
+          }else{
+            writer.writeChunkedBodyDone()
+          }
           break
         }
         writer.writeChunkedBody(value)
+        bodyBuff = Buffer.concat([bodyBuff, value])
       }
 
       return
     }
+
     if(req.requestLine?.requestTarget === "/yourProblem"){
       const bodyContent = Buffer.from(
         `<html>

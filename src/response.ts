@@ -2,7 +2,7 @@ import type { Socket } from "node:net";
 import type { Headers } from "./request.ts";
 
 export type WriterStatus =
-  "writing status line" | "writing headers" | "writing body" | "done" | "writing chunked body" | "done writing chunked body";
+  "writing status line" | "writing headers" | "writing body" | "done" | "writing chunked body" 
 export type Writer = {
   socket: Socket;
   status: WriterStatus;
@@ -11,6 +11,7 @@ export type Writer = {
   writeBody: (body: Uint8Array<ArrayBuffer>) => void;
   writeChunkedBody: (body: Uint8Array<ArrayBuffer>) => void;
   writeChunkedBodyDone: () => void;
+  writeTrailers: (headers: Headers) => void;
 };
 
 export const statusLines = new Map();
@@ -50,7 +51,9 @@ export function getWriter(socket: Socket): Writer {
         headerString += `${key}: ${value}\r\n`;
       }
       socket.write(headerString + "\r\n");
-      this.status = headers["transfer-encoding"] ? "writing chunked body" : "writing body"
+      this.status = headers["transfer-encoding"] 
+        ? "writing chunked body"
+        : "writing body"
     },
 
     writeBody(body) {
@@ -62,7 +65,6 @@ export function getWriter(socket: Socket): Writer {
     },
 
     writeChunkedBody(body) {
-      console.log(this.status)
       if (this.status !== "writing chunked body"){
         throw new Error("Cannot write chunked body in current state")
       }
@@ -76,6 +78,19 @@ export function getWriter(socket: Socket): Writer {
         throw new Error("Cannot finish chunked body in current state")
       }
       socket.write("0\r\n\r\n");
+      this.status = "done";
+    },
+
+    writeTrailers(headers){
+      if (this.status !== "writing chunked body") {
+        throw new Error("Cannot finish chunked body in current state")
+      }
+      socket.write("0\r\n");
+      let headerString = "";
+      for (const [key, value] of Object.entries(headers)) {
+        headerString += `${key}: ${value}\r\n`;
+      }
+      socket.write(headerString + "\r\n");
       this.status = "done";
     },
   };
